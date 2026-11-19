@@ -4,9 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Home from "@/app/page";
-import RootLayout, { metadata } from "@/app/layout";
-import robots from "@/app/robots";
-import sitemap from "@/app/sitemap";
+import RootLayout from "@/app/layout";
 import { MAX_FILE_BYTES } from "@/components/signal-board";
 
 vi.mock("next/font/google", () => ({ Geist: () => ({ variable: "font-geist" }) }));
@@ -159,6 +157,21 @@ describe("review fixes 2026-11-19", () => {
     expect($("section[aria-labelledby='segments-heading']")?.textContent).toContain("Shares are left out");
   });
 
+  it("picks the peak from the real bucket totals, even 13-digit ones that differ in the last digit", async () => {
+    await upload(csv(["2026-11-19T09:00:00Z,web,1234567890123", "2026-11-19T11:00:00Z,web,1234567890124"]));
+    expect(host.querySelector(".ds-chart-panel tr[data-peak] td")?.textContent).toBe("1234567890124 (peak)");
+  });
+
+  it("never shows a non-zero value as 0 or -0", async () => {
+    await upload(csv(["2026-11-19T11:00:00Z,web,0.003"]));
+    expect(stats()[1]).toBe("Total value0.003sum of the value column");
+    expect(segmentRows()[0].querySelector(".ds-row-value")?.textContent).toBe("0.003");
+    await upload(csv(["2026-11-19T09:00:00Z,web,1", "2026-11-19T11:00:00Z,web,-0.0004"]));
+    const cells = [...host.querySelectorAll(".sl-signed .ds-table td")].map((td) => td.textContent);
+    expect(cells).toContain("-0.0004");
+    expect(cells).not.toContain("-0");
+  });
+
   it("announces each load and clear in a polite status region that stays in the page", async () => {
     const status = () => $(".sl-source [role='status']");
     expect(status()?.getAttribute("aria-live")).toBe("polite");
@@ -173,10 +186,33 @@ describe("review fixes 2026-11-19", () => {
 });
 
 describe("layout and metadata", () => {
-  it("uses Geist on <html> and the site's own domain", () => {
+  it("uses Geist on <html>", () => {
     expect(renderToString(<RootLayout><p>child</p></RootLayout>)).toContain('<html lang="en" class="font-geist">');
-    expect(String(metadata.metadataBase)).toBe("https://analytics-dashboard.bookchaowalit.com/");
-    expect(sitemap().map((entry) => entry.url)).toEqual(["https://analytics-dashboard.bookchaowalit.com"]);
-    expect(robots().sitemap).toBe("https://analytics-dashboard.bookchaowalit.com/sitemap.xml");
+  });
+
+  // SITE_URL is read when lib/site loads, so each case sets the environment first and imports fresh modules.
+  const loadSite = async () => {
+    vi.resetModules();
+    const [{ metadata: meta }, { default: siteMap }, { default: robotsTxt }] = await Promise.all([import("@/app/layout"), import("@/app/sitemap"), import("@/app/robots")]);
+    return { base: String(meta.metadataBase), urls: siteMap().map((entry) => entry.url), robotsSitemap: robotsTxt().sitemap };
+  };
+  afterEach(() => { vi.unstubAllEnvs(); vi.resetModules(); });
+
+  it("uses the site's own domain when NEXT_PUBLIC_SITE_URL is unset", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SITE_URL", undefined);
+    expect(await loadSite()).toEqual({
+      base: "https://analytics-dashboard.bookchaowalit.com/",
+      urls: ["https://analytics-dashboard.bookchaowalit.com"],
+      robotsSitemap: "https://analytics-dashboard.bookchaowalit.com/sitemap.xml",
+    });
+  });
+
+  it("uses NEXT_PUBLIC_SITE_URL when it is set", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SITE_URL", "https://stats.example.test/");
+    expect(await loadSite()).toEqual({
+      base: "https://stats.example.test/",
+      urls: ["https://stats.example.test"],
+      robotsSitemap: "https://stats.example.test/sitemap.xml",
+    });
   });
 });

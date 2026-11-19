@@ -11,8 +11,19 @@ const PERIODS = (Object.keys(WINDOWS) as WindowKey[]).map((id) => ({ id, label: 
 const BUCKET_UNIT: Record<WindowKey, string> = { "24H": "hour", "7D": "day", "30D": "day" };
 const numberFormat = new Intl.NumberFormat("en-US");
 const formatNumber = (value: number) => numberFormat.format(Math.round(value * 100) / 100);
-/** A bucket sum without float noise (0.1 + 0.2 → 0.3) but with every real digit (0.003 stays 0.003). */
-const exact = (value: number) => Number(value.toPrecision(12));
+/**
+ * A sum without float noise (0.1 + 0.2 → 0.3) and with every digit a double holds: 15 significant digits is all a
+ * double keeps exactly, so totals that really differ (…123 vs …124, 0.003 vs 0.004) stay apart and keep the peak.
+ */
+const exact = (value: number) => Number(value.toPrecision(15));
+const valueFormat = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
+const smallValueFormat = new Intl.NumberFormat("en-US", { maximumSignificantDigits: 3 });
+/** A value for display: two decimals, but a non-zero value under 0.01 keeps three significant digits (never 0 or -0). */
+export function formatValue(value: number): string {
+  const clean = exact(value);
+  if (clean === 0) return "0";
+  return Math.abs(clean) < 0.01 ? smallValueFormat.format(clean) : valueFormat.format(clean);
+}
 /** Segment rows rendered at a time; the stats and shares still use every segment. */
 export const SEGMENT_PAGE = 50;
 
@@ -130,7 +141,7 @@ export function SignalBoard() {
         <>
           <ul className="ds-stats" aria-label={`${Period} at a glance`}>
             <Stat label="Events" value={formatNumber(view.summary.eventCount)} note="rows in the window" />
-            <Stat label="Total value" value={formatNumber(view.summary.total)} note="sum of the value column" />
+            <Stat label="Total value" value={formatValue(view.summary.total)} note="sum of the value column" />
             <Stat label="Segments" value={formatNumber(view.summary.segments)} note="distinct segment values" />
             <Stat
               label="Newest event"
@@ -156,7 +167,7 @@ export function SignalBoard() {
                     <thead><tr><th scope="col">{BUCKET_UNIT[windowKey] === "hour" ? "Hour" : "Day"} from (UTC)</th><th scope="col">Value</th></tr></thead>
                     <tbody>
                       {view.buckets.map((value, index) => (
-                        <tr key={index}><th scope="row">{view.labels[index]}</th><td>{numberFormat.format(value)}</td></tr>
+                        <tr key={index}><th scope="row">{view.labels[index]}</th><td>{formatValue(value)}</td></tr>
                       ))}
                     </tbody>
                   </table>
@@ -166,7 +177,7 @@ export function SignalBoard() {
             <ChartPanel
               title="Value over time"
               subtitle={`${Period} · sum of value per ${BUCKET_UNIT[windowKey]}`}
-              summary={`Value per ${BUCKET_UNIT[windowKey]}, ${period}: total ${formatNumber(view.summary.total)} across ${formatNumber(view.summary.eventCount)} events, highest bucket ${numberFormat.format(Math.max(...view.buckets))}.`}
+              summary={`Value per ${BUCKET_UNIT[windowKey]}, ${period}: total ${formatValue(view.summary.total)} across ${formatNumber(view.summary.eventCount)} events, highest bucket ${formatValue(Math.max(...view.buckets))}.`}
               values={view.buckets}
               labels={view.labels}
               ticks={axisTicks(windowKey).ticks}
@@ -196,7 +207,7 @@ export function SignalBoard() {
                         <li key={row.segment} className="ds-row">
                           <span className="ds-row-name">{row.segment || "No segment"}</span>
                           <span className="ds-row-detail">{formatNumber(row.events)} events{share === null ? "" : ` · ${share}% of value`}</span>
-                          <span className="ds-row-value">{formatNumber(row.total)}</span>
+                          <span className="ds-row-value">{formatValue(row.total)}</span>
                           {share === null ? null : <span className="ds-meter" aria-hidden="true"><span style={{ width: `${share}%` }} /></span>}
                         </li>
                       );
