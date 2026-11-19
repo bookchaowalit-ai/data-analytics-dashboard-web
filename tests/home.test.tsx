@@ -1,4 +1,6 @@
 // @vitest-environment happy-dom
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { renderToString } from "react-dom/server";
@@ -170,6 +172,37 @@ describe("review fixes 2026-11-19", () => {
     const cells = [...host.querySelectorAll(".sl-signed .ds-table td")].map((td) => td.textContent);
     expect(cells).toContain("-0.0004");
     expect(cells).not.toContain("-0");
+  });
+
+  it("picks the peak and fills the chart table from the unrounded totals (16-digit sums a double holds exactly)", async () => {
+    await upload(csv(["2026-11-19T09:00:00Z,web,1000000000000001", "2026-11-19T11:00:00Z,web,1000000000000002"]));
+    const cells = [...host.querySelectorAll(".ds-chart-panel .ds-table td")].map((td) => td.textContent);
+    expect(cells).toContain("1000000000000001");
+    expect(host.querySelector(".ds-chart-panel tr[data-peak] td")?.textContent).toBe("1000000000000002 (peak)");
+  });
+
+  it("lists signed bucket totals at full precision", async () => {
+    await upload(csv(["2026-11-19T09:00:00Z,web,0.0144", "2026-11-19T11:00:00Z,web,-0.0123"]));
+    const cells = [...host.querySelectorAll(".sl-signed .ds-table td")].map((td) => td.textContent);
+    expect(cells).toContain("0.0144");
+    expect(cells).toContain("-0.0123");
+  });
+
+  it("moves focus to the results after Load sample from the empty state, and to the file picker after Clear", () => {
+    const empty = $(".sl-empty .ds-button")!;
+    empty.focus();
+    press(empty);
+    expect(document.activeElement).toBe($(".ds-stats"));
+    const clearButton = button("Clear")!;
+    clearButton.focus();
+    press(clearButton);
+    expect(document.activeElement).toBe($('input[type="file"]'));
+  });
+
+  it("lets a long segment total shrink and wrap instead of squeezing the name (app-local, shell untouched)", () => {
+    const css = readFileSync(join(process.cwd(), "app/globals.css"), "utf8");
+    expect(css).toMatch(/\.sl-segments \.ds-row \{[^}]*grid-template-columns: minmax\(50%, 1fr\) minmax\(0, max-content\)/);
+    expect(css).toMatch(/\.sl-segments \.ds-row-value \{[^}]*min-width: 0;[^}]*overflow-wrap: anywhere/);
   });
 
   it("announces each load and clear in a polite status region that stays in the page", async () => {

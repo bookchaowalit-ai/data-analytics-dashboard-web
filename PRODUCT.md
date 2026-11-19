@@ -58,3 +58,10 @@ provider contract.
 Use semantic landmarks, keyboard-visible focus, readable contrast, tabular
 numerals where appropriate, and reduced motion support. Product-specific
 accessibility requirements are not yet known.
+
+## Known limits
+
+- The chart table and the signed-value table print each bucket's raw sum, so decimal sums can show binary float noise
+  (0.1 + 0.2 → 0.30000000000000004); the stat tiles, segment values and chart summary round for reading. Raw sums keep
+  the peak and every digit a double holds (2026-11-20 review: no rounding before the peak).
+- The app is frozen after the 2026-11-20 review round; later findings go here instead of into code.

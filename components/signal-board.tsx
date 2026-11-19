@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type ChangeEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { ChartPanel, Pill, Segmented, Stat } from "@/components/dashboard-shell";
 import { WINDOWS, axisTicks, bucketLabel, dayLabel, bucketStarts, newestTimestamp, parseEventsCsv, sampleCsv, segmentBreakdown, summarizeWindow, type AnalyticsEvent, type WindowKey } from "@/lib/analytics";
 
@@ -11,10 +11,7 @@ const PERIODS = (Object.keys(WINDOWS) as WindowKey[]).map((id) => ({ id, label: 
 const BUCKET_UNIT: Record<WindowKey, string> = { "24H": "hour", "7D": "day", "30D": "day" };
 const numberFormat = new Intl.NumberFormat("en-US");
 const formatNumber = (value: number) => numberFormat.format(Math.round(value * 100) / 100);
-/**
- * A sum without float noise (0.1 + 0.2 → 0.3) and with every digit a double holds: 15 significant digits is all a
- * double keeps exactly, so totals that really differ (…123 vs …124, 0.003 vs 0.004) stay apart and keep the peak.
- */
+/** Display only: drops float noise (0.1 + 0.2 → 0.3) before formatting; the chart, its peak and the tables use raw sums. */
 const exact = (value: number) => Number(value.toPrecision(15));
 const valueFormat = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
 const smallValueFormat = new Intl.NumberFormat("en-US", { maximumSignificantDigits: 3 });
@@ -36,6 +33,16 @@ export function SignalBoard() {
   const [shownSegments, setShownSegments] = useState(SEGMENT_PAGE);
   // Said once per load or clear in a status region that stays in the page, so screen readers hear where figures come from.
   const [announcement, setAnnouncement] = useState("");
+  // Where focus goes once the next render has replaced a button that held it (Load sample in the empty state, Clear).
+  const focusNext = useRef<"results" | "file" | null>(null);
+  const statsRef = useRef<HTMLUListElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    const target = focusNext.current;
+    if (!target) return;
+    focusNext.current = null;
+    (target === "results" ? statsRef.current : fileRef.current)?.focus();
+  });
   const period = WINDOWS[windowKey].label;
   const Period = period.charAt(0).toUpperCase() + period.slice(1);
 
@@ -44,7 +51,8 @@ export function SignalBoard() {
     const end = newestTimestamp(events);
     const summary = summarizeWindow(events, windowKey);
     const segments = segmentBreakdown(events, windowKey);
-    const buckets = summary.buckets.map(exact);
+    // Unrounded sums for the chart, its peak and both tables; only text built for reading (tiles, summary) is formatted.
+    const buckets = summary.buckets;
     return {
       end,
       summary,
@@ -85,7 +93,12 @@ export function SignalBoard() {
   };
 
   const loadSample = () => load(sampleCsv(Date.now()), { kind: "demo" });
+  const loadSampleFromEmpty = () => {
+    focusNext.current = "results";
+    loadSample();
+  };
   const clear = () => {
+    focusNext.current = "file";
     setEvents([]);
     setSource(null);
     setIssues([]);
@@ -123,7 +136,7 @@ export function SignalBoard() {
         <div className="ds-actions">
           <label className="ds-button sl-file">
             Choose CSV file
-            <input type="file" className="ds-sr" accept=".csv,text/csv" onChange={onFile} />
+            <input ref={fileRef} type="file" className="ds-sr" accept=".csv,text/csv" onChange={onFile} />
           </label>
           <button type="button" className="ds-plain" onClick={loadSample}>Load sample data</button>
           {source || issues.length > 0 ? <button type="button" className="ds-plain" onClick={clear}>Clear</button> : null}
@@ -139,7 +152,7 @@ export function SignalBoard() {
 
       {view ? (
         <>
-          <ul className="ds-stats" aria-label={`${Period} at a glance`}>
+          <ul ref={statsRef} tabIndex={-1} className="ds-stats" aria-label={`${Period} at a glance`}>
             <Stat label="Events" value={formatNumber(view.summary.eventCount)} note="rows in the window" />
             <Stat label="Total value" value={formatValue(view.summary.total)} note="sum of the value column" />
             <Stat label="Segments" value={formatNumber(view.summary.segments)} note="distinct segment values" />
@@ -167,7 +180,7 @@ export function SignalBoard() {
                     <thead><tr><th scope="col">{BUCKET_UNIT[windowKey] === "hour" ? "Hour" : "Day"} from (UTC)</th><th scope="col">Value</th></tr></thead>
                     <tbody>
                       {view.buckets.map((value, index) => (
-                        <tr key={index}><th scope="row">{view.labels[index]}</th><td>{formatValue(value)}</td></tr>
+                        <tr key={index}><th scope="row">{view.labels[index]}</th><td>{value}</td></tr>
                       ))}
                     </tbody>
                   </table>
@@ -189,7 +202,7 @@ export function SignalBoard() {
             />
             )}
 
-            <section className="ds-panel" aria-labelledby="segments-heading">
+            <section className="ds-panel sl-segments" aria-labelledby="segments-heading">
               <div className="ds-panel-head">
                 <div>
                   <h2 id="segments-heading">Segments</h2>
@@ -240,7 +253,7 @@ export function SignalBoard() {
           <h2 id="empty-heading">No data yet</h2>
           <p>Choose a CSV export of events to see counts, value, segments and the trend for the last 24 hours, 7 or 30 days. Or load sample data to see how it works first.</p>
           <div className="ds-actions">
-            <button type="button" className="ds-button" onClick={loadSample}>Load sample data</button>
+            <button type="button" className="ds-button" onClick={loadSampleFromEmpty}>Load sample data</button>
           </div>
         </section>
       )}
