@@ -64,4 +64,13 @@ accessibility requirements are not yet known.
 - The chart table and the signed-value table print each bucket's raw sum, so decimal sums can show binary float noise
   (0.1 + 0.2 → 0.30000000000000004); the stat tiles, segment values and chart summary round for reading. Raw sums keep
   the peak and every digit a double holds (2026-11-20 review: no rounding before the peak).
+- Stat tiles, segment totals and the chart summary format through 15 significant digits, so a total with more digits
+  (1000000000000002) shows its last integer digits as zeros there; the chart table holds the raw sum
+  (Codex report -13c80adda9).
+- Period start labels show hours and minutes only. Each window ends at the newest event, so a bucket can start at
+  10:00:45 while its label reads 10:00 (Codex report -13c80adda9).
+- A long CSV file name without spaces can push the Data source panel past 320px and scroll the page sideways
+  (Codex report -13c80adda9).
+- After the last "Show N more" the button leaves the page and focus falls to the page body instead of the first new
+  segment row (Codex report -13c80adda9).
 - The app is frozen after the 2026-11-20 review round; later findings go here instead of into code.
