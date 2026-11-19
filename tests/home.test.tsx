@@ -1,0 +1,128 @@
+// @vitest-environment happy-dom
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { renderToString } from "react-dom/server";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import Home from "@/app/page";
+import RootLayout, { metadata } from "@/app/layout";
+import robots from "@/app/robots";
+import sitemap from "@/app/sitemap";
+import { MAX_FILE_BYTES } from "@/components/signal-board";
+
+vi.mock("next/font/google", () => ({ Geist: () => ({ variable: "font-geist" }) }));
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+const NOW = Date.UTC(2026, 10, 19, 12, 0);
+let root: Root;
+let host: HTMLDivElement;
+const $ = <T extends Element = HTMLElement>(selector: string) => host.querySelector(selector) as T | null;
+const button = (text: string) => [...host.querySelectorAll("button")].find((b) => b.textContent?.trim() === text) as HTMLButtonElement | undefined;
+const press = (el: Element) => act(() => { el.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+const stats = () => [...host.querySelectorAll(".ds-stat")].map((tile) => tile.textContent);
+const upload = async (file: File) => {
+  const input = $('input[type="file"]') as HTMLInputElement;
+  Object.defineProperty(input, "files", { configurable: true, value: [file] });
+  await act(async () => { input.dispatchEvent(new Event("change", { bubbles: true })); });
+};
+
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(NOW);
+  host = document.createElement("div");
+  document.body.append(host);
+  root = createRoot(host);
+  act(() => root.render(<Home />));
+});
+afterEach(() => {
+  act(() => root.unmount());
+  host.remove();
+  vi.useRealTimers();
+});
+
+describe("Signal Ledger on the Dashboard shell", () => {
+  it("opens with an honest empty state instead of placeholder figures", () => {
+    expect($("h1")?.textContent).toBe("Events over time");
+    expect($(".ds-head .ds-pill")?.textContent).toBe("No data yet");
+    expect($(".sl-empty h2")?.textContent).toBe("No data yet");
+    expect($(".ds-stats")).toBeNull();
+    expect($("svg")).toBeNull();
+    expect(button("Clear")).toBeUndefined();
+    expect(host.querySelector("button:disabled")).toBeNull();
+    expect($(".ds-skip")?.getAttribute("href")).toBe("#main");
+    const links = [...host.querySelectorAll(".ds-foot a")].map((a) => a.getAttribute("href"));
+    expect(links).toContain("https://bookchaowalit.com/");
+    expect(links).toContain("https://github.com/bookchaowalit-ai/data-analytics-dashboard-web");
+  });
+
+  it("loads the sample from the empty state and labels it as sample data", () => {
+    press($(".sl-empty .ds-button")!);
+    expect($(".ds-head .ds-pill")?.textContent).toBe("Sample data");
+    expect($("#source-heading + p")?.textContent).toBe("Sample data generated in this browser · 400 rows read");
+    expect(stats()).toHaveLength(4);
+    expect(stats()[0]).toMatch(/^Events\d+rows in the window$/);
+    expect(stats()[3]).toMatch(/^Newest event\d\d:\d\dUTC\d+ Nov 2026$/);
+    expect(host.textContent).toContain("Do not read the trend as real behaviour");
+    expect([...host.querySelectorAll(".ds-chart-x span")].map((s) => s.textContent)).toEqual(["−24h", "−12h", "newest"]);
+    expect([...host.querySelectorAll(".ds-rows .ds-row-name")].map((s) => s.textContent).sort()).toEqual(["direct", "organic", "referral"]);
+  });
+
+  it("switches the period and recomputes the window", () => {
+    press(button("Load sample data")!);
+    const events24 = stats()[0];
+    press(button("30D")!);
+    expect(button("30D")?.getAttribute("aria-pressed")).toBe("true");
+    expect(stats()[0]).toBe("Events400rows in the window");
+    expect(stats()[0]).not.toBe(events24);
+    expect($(".ds-head p")?.textContent).toContain("Last 30 days · per day · UTC");
+    expect([...host.querySelectorAll(".ds-chart-x span")].map((s) => s.textContent)).toEqual(["−30d", "−15d", "newest"]);
+    press(button("7D")!);
+    expect($(".ds-table thead")?.textContent).toBe("Day from (UTC)Value");
+    expect(host.querySelectorAll(".ds-table tbody tr")).toHaveLength(7);
+  });
+
+  it("reads an uploaded file, names it and clears back to empty", async () => {
+    await upload(new File(["timestamp,segment,value\n2026-11-19T10:00:00Z,web,3\n2026-11-19T11:30:00Z,,2\nbad,web,1"], "events.csv", { type: "text/csv" }));
+    expect($(".ds-head .ds-pill")?.textContent).toBe("Your file");
+    expect($("#source-heading + p")?.textContent).toBe("events.csv · 2 rows read");
+    expect($(".sl-issues")?.textContent).toBe("Row 4: invalid timestamp.");
+    expect(stats()).toEqual(["Events2rows in the window", "Total value5sum of the value column", "Segments1distinct segment values", "Newest event11:30UTC19 Nov 2026"]);
+    expect([...host.querySelectorAll(".ds-rows .ds-row")].map((r) => r.textContent)).toEqual(["web1 events · 60% of value3", "No segment1 events · 40% of value2"]);
+    expect(host.textContent).toContain("Figures come from your file");
+    press(button("Clear")!);
+    expect($(".sl-empty")).not.toBeNull();
+    expect($(".sl-issues")).toBeNull();
+  });
+
+  it("refuses an oversized or unusable file without losing the empty state", async () => {
+    const big = new File(["x"], "big.csv");
+    Object.defineProperty(big, "size", { value: MAX_FILE_BYTES + 1 });
+    await upload(big);
+    expect($(".sl-issues")?.textContent).toContain("larger than 10 MB");
+    await upload(new File(["when,value\n1,2"], "nope.csv"));
+    expect($(".sl-issues")?.textContent).toContain('"timestamp"');
+    expect($(".sl-empty")).not.toBeNull();
+    expect(button("Clear")).toBeDefined();
+    // No file chosen (the picker was cancelled): nothing changes.
+    const input = $('input[type="file"]') as HTMLInputElement;
+    Object.defineProperty(input, "files", { configurable: true, value: [] });
+    await act(async () => { input.dispatchEvent(new Event("change", { bubbles: true })); });
+    expect($(".sl-empty")).not.toBeNull();
+  });
+
+  it("ends every window at the newest event, so an old row only counts in the longer windows", async () => {
+    await upload(new File(["timestamp\n2026-11-19T10:00:00Z\n2026-10-01T10:00:00Z"], "gap.csv"));
+    expect(stats()[0]).toBe("Events1rows in the window");
+    press(button("30D")!);
+    expect(stats()[0]).toBe("Events1rows in the window");
+    expect([...host.querySelectorAll(".ds-rows .ds-row-name")].map((s) => s.textContent)).toEqual(["No segment"]);
+  });
+});
+
+describe("layout and metadata", () => {
+  it("uses Geist on <html> and the site's own domain", () => {
+    expect(renderToString(<RootLayout><p>child</p></RootLayout>)).toContain('<html lang="en" class="font-geist">');
+    expect(String(metadata.metadataBase)).toBe("https://analytics-dashboard.bookchaowalit.com/");
+    expect(sitemap().map((entry) => entry.url)).toEqual(["https://analytics-dashboard.bookchaowalit.com"]);
+    expect(robots().sitemap).toBe("https://analytics-dashboard.bookchaowalit.com/sitemap.xml");
+  });
+});

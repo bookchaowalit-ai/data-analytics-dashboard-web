@@ -6,7 +6,8 @@ export const alt = "Signal Ledger — analytics with provenance";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
-const colors = {"bg":"#101925","ink":"#e8e3d6","muted":"#9ba4ad","accent":"#f4a261"};
+// Dashboard shell palette (light): --ds-bg, --ds-fg, --ds-muted, --ds-accent.
+const colors = {"bg":"#f5f5f7","ink":"#1d1d1f","muted":"#6e6e73","accent":"#0066cc"};
 const KICKER = "SIGNAL LEDGER";
 const TITLE = "Analytics, with provenance";
 const SUBTITLE = "Read a local CSV event export. Nothing leaves the browser.";

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
-import { parseEventsCsv, sampleCsv, splitCsvLine, summarizeWindow, tracePath } from "../lib/analytics.ts";
+import { describe, it } from "vitest";
+import { axisTicks, bucketLabel, dayLabel, bucketStarts, newestTimestamp, parseEventsCsv, sampleCsv, segmentBreakdown, splitCsvLine, summarizeWindow } from "../lib/analytics.ts";
 
 const HOUR = 60 * 60 * 1000;
 
@@ -62,12 +62,47 @@ describe("summarizeWindow", () => {
   });
 });
 
-describe("tracePath and sample", () => {
-  it("draws a path within the chart box", () => {
-    const path = tracePath([0, 5, 10]);
-    assert.equal(path, "M12.0 125.0 L215.0 72.5 L418.0 20.0");
-    assert.equal(tracePath([]), "");
-    assert.match(tracePath([0, 0]), /^M12\.0 125\.0 L418\.0 125\.0$/);
+describe("window helpers", () => {
+  const end = Date.UTC(2026, 10, 19, 13, 5);
+
+  it("finds the newest event and the bucket starts that end there", () => {
+    assert.equal(newestTimestamp([]), 0);
+    assert.equal(newestTimestamp([{ timestamp: 5, segment: "", value: 1 }, { timestamp: 9, segment: "", value: 1 }]), 9);
+    const starts = bucketStarts(end, "24H");
+    assert.equal(starts.length, 24);
+    assert.equal(starts[0], end - 24 * HOUR);
+    assert.equal(starts[23], end - HOUR);
+    assert.equal(bucketStarts(end, "30D").length, 30);
+  });
+
+  it("labels buckets in UTC, with the date on the longer windows", () => {
+    assert.equal(bucketLabel(end, "24H"), "13:05");
+    assert.equal(bucketLabel(end, "7D"), "19 Nov 13:05");
+    assert.equal(bucketLabel(Date.UTC(2026, 0, 2, 3, 4), "30D"), "2 Jan 03:04");
+    assert.equal(dayLabel(end), "19 Nov 2026");
+  });
+
+  it("names the start, middle and end of each axis", () => {
+    assert.deepEqual(axisTicks("24H"), { ticks: [0, 12, 24], labels: ["−24h", "−12h", "newest"] });
+    assert.deepEqual(axisTicks("7D"), { ticks: [0, 4, 7], labels: ["−7d", "−3d", "newest"] });
+    assert.deepEqual(axisTicks("30D"), { ticks: [0, 15, 30], labels: ["−30d", "−15d", "newest"] });
+  });
+
+  it("breaks the window down by segment, largest total first", () => {
+    const events = [
+      { timestamp: end, segment: "organic", value: 2 },
+      { timestamp: end - HOUR, segment: "direct", value: 5 },
+      { timestamp: end - 2 * HOUR, segment: "organic", value: 4 },
+      { timestamp: end - 2 * HOUR, segment: "", value: 1 },
+      { timestamp: end - 48 * HOUR, segment: "old", value: 99 },
+    ];
+    assert.deepEqual(segmentBreakdown(events, "24H"), [
+      { segment: "organic", events: 2, total: 6 },
+      { segment: "direct", events: 1, total: 5 },
+      { segment: "", events: 1, total: 1 },
+    ]);
+    assert.equal(segmentBreakdown(events, "7D")[0].segment, "old");
+    assert.deepEqual(segmentBreakdown([], "24H"), []);
   });
 
   it("produces a deterministic parseable sample", () => {

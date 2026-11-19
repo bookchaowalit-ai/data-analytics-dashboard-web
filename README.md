@@ -2,8 +2,9 @@
 
 A browser-only analytics console. Attach a CSV export of events and the page
 summarises it per window (24H / 7D / 30D) without uploading anything. With no
-file attached, the chart is explicitly labelled illustrative; the "Load
-synthetic demo" sample is labelled synthetic everywhere it appears.
+file attached the page shows an empty state, not placeholder figures; the "Load
+sample data" button fills it with synthetic events labelled "Sample data". The
+page uses the shared Dashboard shell (see DASHBOARD.md).
 
 ## CSV contract
 - Header row with `timestamp` (ISO 8601, epoch seconds, or epoch ms; ISO date-times without an offset are read as UTC).

@@ -177,7 +177,7 @@ export interface WindowSummary {
  */
 export function summarizeWindow(events: readonly AnalyticsEvent[], key: WindowKey, now?: number): WindowSummary {
   const { durationMs, buckets: bucketCount } = WINDOWS[key];
-  const end = now ?? events.reduce((max, event) => Math.max(max, event.timestamp), 0);
+  const end = now ?? newestTimestamp(events);
   const start = end - durationMs;
   const bucketSize = durationMs / bucketCount;
   const buckets = new Array<number>(bucketCount).fill(0);
@@ -199,20 +199,61 @@ export function summarizeWindow(events: readonly AnalyticsEvent[], key: WindowKe
   return { total, eventCount, segments: segments.size, lastObservation, buckets };
 }
 
-/** Build an SVG polyline path for bucket values inside the chart viewBox. */
-export function tracePath(buckets: readonly number[], box = { left: 12, right: 418, top: 20, bottom: 125 }): string {
-  if (buckets.length === 0) return "";
-  const max = Math.max(...buckets);
-  const min = Math.min(0, ...buckets);
-  const range = max - min || 1;
-  const step = buckets.length === 1 ? 0 : (box.right - box.left) / (buckets.length - 1);
-  return buckets
-    .map((value, index) => {
-      const x = box.left + step * index;
-      const y = box.bottom - ((value - min) / range) * (box.bottom - box.top);
-      return `${index === 0 ? "M" : "L"}${x.toFixed(1)} ${y.toFixed(1)}`;
-    })
-    .join(" ");
+/** The newest event's timestamp: every window ends there, so a historical export still shows its own last day. */
+export function newestTimestamp(events: readonly AnalyticsEvent[]): number {
+  return events.reduce((max, event) => Math.max(max, event.timestamp), 0);
+}
+
+/** Start time of each bucket in the window ending at `end` (oldest first). */
+export function bucketStarts(end: number, key: WindowKey): number[] {
+  const { durationMs, buckets } = WINDOWS[key];
+  const size = durationMs / buckets;
+  return Array.from({ length: buckets }, (_, index) => end - durationMs + index * size);
+}
+
+const pad = (value: number) => String(value).padStart(2, "0");
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** "13:05" for the 24-hour window, "19 Nov 13:05" for the longer ones; always UTC, like the parser. */
+export function bucketLabel(timestamp: number, key: WindowKey): string {
+  const date = new Date(timestamp);
+  const time = `${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}`;
+  return key === "24H" ? time : `${date.getUTCDate()} ${MONTHS[date.getUTCMonth()]} ${time}`;
+}
+
+/** "19 Nov 2026" (UTC): the date under the newest event's time. */
+export function dayLabel(timestamp: number): string {
+  const date = new Date(timestamp);
+  return `${date.getUTCDate()} ${MONTHS[date.getUTCMonth()]} ${date.getUTCFullYear()}`;
+}
+
+/** Short relative labels for the start, middle and end edges of the axis ("−24h", "−12h", "newest"). */
+export function axisTicks(key: WindowKey): { ticks: number[]; labels: string[] } {
+  const { buckets } = WINDOWS[key];
+  const middle = Math.round(buckets / 2);
+  const unit = key === "24H" ? "h" : "d";
+  return { ticks: [0, middle, buckets], labels: [`−${buckets}${unit}`, `−${buckets - middle}${unit}`, "newest"] };
+}
+
+export interface SegmentRow {
+  segment: string;
+  events: number;
+  total: number;
+}
+
+/** Events and summed value per segment inside the window, largest total first ("" is rows without a segment). */
+export function segmentBreakdown(events: readonly AnalyticsEvent[], key: WindowKey, now?: number): SegmentRow[] {
+  const end = now ?? newestTimestamp(events);
+  const start = end - WINDOWS[key].durationMs;
+  const rows = new Map<string, SegmentRow>();
+  for (const event of events) {
+    if (event.timestamp <= start || event.timestamp > end) continue;
+    const row = rows.get(event.segment) ?? { segment: event.segment, events: 0, total: 0 };
+    row.events += 1;
+    row.total += event.value;
+    rows.set(event.segment, row);
+  }
+  return [...rows.values()].sort((a, b) => b.total - a.total || a.segment.localeCompare(b.segment));
 }
 
 /** Deterministic synthetic sample for the "load demo" action (clearly labelled in UI). */
