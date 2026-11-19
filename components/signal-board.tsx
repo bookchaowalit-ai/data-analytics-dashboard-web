@@ -11,6 +11,10 @@ const PERIODS = (Object.keys(WINDOWS) as WindowKey[]).map((id) => ({ id, label: 
 const BUCKET_UNIT: Record<WindowKey, string> = { "24H": "hour", "7D": "day", "30D": "day" };
 const numberFormat = new Intl.NumberFormat("en-US");
 const formatNumber = (value: number) => numberFormat.format(Math.round(value * 100) / 100);
+/** A bucket sum without float noise (0.1 + 0.2 → 0.3) but with every real digit (0.003 stays 0.003). */
+const exact = (value: number) => Number(value.toPrecision(12));
+/** Segment rows rendered at a time; the stats and shares still use every segment. */
+export const SEGMENT_PAGE = 50;
 
 /** The interactive board: data source, period switch, stat tiles, chart and segment breakdown. */
 export function SignalBoard() {
@@ -18,30 +22,44 @@ export function SignalBoard() {
   const [events, setEvents] = useState<AnalyticsEvent[]>([]);
   const [source, setSource] = useState<Source | null>(null);
   const [issues, setIssues] = useState<string[]>([]);
+  const [shownSegments, setShownSegments] = useState(SEGMENT_PAGE);
+  // Said once per load or clear in a status region that stays in the page, so screen readers hear where figures come from.
+  const [announcement, setAnnouncement] = useState("");
   const period = WINDOWS[windowKey].label;
   const Period = period.charAt(0).toUpperCase() + period.slice(1);
 
   const view = useMemo(() => {
     if (!source) return null;
     const end = newestTimestamp(events);
+    const summary = summarizeWindow(events, windowKey);
+    const segments = segmentBreakdown(events, windowKey);
+    const buckets = summary.buckets.map(exact);
     return {
       end,
-      summary: summarizeWindow(events, windowKey),
+      summary,
+      buckets,
+      hasNegative: buckets.some((value) => value < 0),
+      // A share of the net total only means something when nothing pulls it below zero.
+      sharesValid: summary.total > 0 && segments.every((row) => row.total >= 0),
       labels: bucketStarts(end, windowKey).map((start) => bucketLabel(start, windowKey)),
-      segments: segmentBreakdown(events, windowKey),
+      segments,
     };
   }, [events, source, windowKey]);
 
   const load = (text: string, next: Source) => {
     const result = parseEventsCsv(text);
     setIssues(result.errors);
+    setShownSegments(SEGMENT_PAGE);
     if (result.events.length === 0) {
       setEvents([]);
       setSource(null);
+      setAnnouncement("");
       return;
     }
     setEvents(result.events);
     setSource(next);
+    const count = formatNumber(result.events.length);
+    setAnnouncement(next.kind === "demo" ? `Loaded sample data: ${count} rows.` : `Loaded ${next.name}: ${count} rows read.`);
   };
 
   const onFile = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -60,6 +78,12 @@ export function SignalBoard() {
     setEvents([]);
     setSource(null);
     setIssues([]);
+    setShownSegments(SEGMENT_PAGE);
+    setAnnouncement("Cleared. No data loaded.");
+  };
+  const pickWindow = (key: WindowKey) => {
+    setWindowKey(key);
+    setShownSegments(SEGMENT_PAGE);
   };
 
   const isDemo = source?.kind === "demo";
@@ -75,7 +99,7 @@ export function SignalBoard() {
             {source ? <Pill tone={isDemo ? "grey" : "green"}>{isDemo ? "Sample data" : "Your file"}</Pill> : <Pill tone="amber">No data yet</Pill>}
           </p>
         </div>
-        <Segmented label="Period" options={PERIODS} value={windowKey} onChange={setWindowKey} />
+        <Segmented label="Period" options={PERIODS} value={windowKey} onChange={pickWindow} />
       </div>
 
       <section className="ds-panel sl-source" aria-labelledby="source-heading">
@@ -93,6 +117,7 @@ export function SignalBoard() {
           <button type="button" className="ds-plain" onClick={loadSample}>Load sample data</button>
           {source || issues.length > 0 ? <button type="button" className="ds-plain" onClick={clear}>Clear</button> : null}
         </div>
+        <p className="ds-sr" role="status" aria-live="polite">{announcement}</p>
         <p>A header row with <code>timestamp</code> (ISO 8601 or epoch), and optional <code>segment</code> and <code>value</code> columns. Read in this browser only, up to 10 MB; nothing is uploaded.</p>
         {issues.length > 0 ? (
           <ul className="sl-issues" role="alert">
@@ -116,43 +141,79 @@ export function SignalBoard() {
           </ul>
 
           <div className="ds-grid">
+            {view.hasNegative ? (
+              // The shared chart draws from 0 up, so a bucket below zero would sit on the zero line; list every bucket instead.
+              <section className="ds-panel sl-signed" aria-labelledby="signed-heading">
+                <div className="ds-panel-head">
+                  <div>
+                    <h2 id="signed-heading">Value over time</h2>
+                    <p>{Period} · sum of value per {BUCKET_UNIT[windowKey]}</p>
+                  </div>
+                </div>
+                <p className="ds-note">Some {BUCKET_UNIT[windowKey]}s sum below zero (refunds, corrections), which the line chart cannot draw, so every {BUCKET_UNIT[windowKey]} is listed with its signed value.</p>
+                <div className="ds-table-wrap sl-signed-table" tabIndex={0} role="region" aria-label="Value over time as a table">
+                  <table className="ds-table">
+                    <thead><tr><th scope="col">{BUCKET_UNIT[windowKey] === "hour" ? "Hour" : "Day"} from (UTC)</th><th scope="col">Value</th></tr></thead>
+                    <tbody>
+                      {view.buckets.map((value, index) => (
+                        <tr key={index}><th scope="row">{view.labels[index]}</th><td>{numberFormat.format(value)}</td></tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            ) : (
             <ChartPanel
               title="Value over time"
               subtitle={`${Period} · sum of value per ${BUCKET_UNIT[windowKey]}`}
-              summary={`Value per ${BUCKET_UNIT[windowKey]}, ${period}: total ${formatNumber(view.summary.total)} across ${formatNumber(view.summary.eventCount)} events, highest bucket ${formatNumber(Math.max(...view.summary.buckets))}.`}
-              values={view.summary.buckets.map((value) => Math.round(value * 100) / 100)}
+              summary={`Value per ${BUCKET_UNIT[windowKey]}, ${period}: total ${formatNumber(view.summary.total)} across ${formatNumber(view.summary.eventCount)} events, highest bucket ${numberFormat.format(Math.max(...view.buckets))}.`}
+              values={view.buckets}
               labels={view.labels}
               ticks={axisTicks(windowKey).ticks}
               tickLabels={axisTicks(windowKey).labels}
-              max={Math.max(...view.summary.buckets)}
+              max={Math.max(...view.buckets)}
               unit="Value"
               labelHeading={`${BUCKET_UNIT[windowKey] === "hour" ? "Hour" : "Day"} from (UTC)`}
               buckets
             />
+            )}
 
             <section className="ds-panel" aria-labelledby="segments-heading">
               <div className="ds-panel-head">
                 <div>
                   <h2 id="segments-heading">Segments</h2>
-                  <p>Share of value · {period}</p>
+                  <p>{view.sharesValid ? "Share of value" : "Value"} · {period}</p>
                 </div>
               </div>
               {view.segments.length === 0 ? (
                 <p className="ds-note">No events fall in this window. Try a longer period.</p>
               ) : (
-                <ul className="ds-rows">
-                  {view.segments.map((row) => {
-                    const share = view.summary.total > 0 ? Math.round((row.total / view.summary.total) * 100) : 0;
-                    return (
-                      <li key={row.segment} className="ds-row">
-                        <span className="ds-row-name">{row.segment || "No segment"}</span>
-                        <span className="ds-row-detail">{formatNumber(row.events)} events · {share}% of value</span>
-                        <span className="ds-row-value">{formatNumber(row.total)}</span>
-                        <span className="ds-meter" aria-hidden="true"><span style={{ width: `${Math.max(0, Math.min(100, share))}%` }} /></span>
-                      </li>
-                    );
-                  })}
-                </ul>
+                <>
+                  <ul className="ds-rows">
+                    {view.segments.slice(0, shownSegments).map((row) => {
+                      const share = view.sharesValid ? Math.round((row.total / view.summary.total) * 100) : null;
+                      return (
+                        <li key={row.segment} className="ds-row">
+                          <span className="ds-row-name">{row.segment || "No segment"}</span>
+                          <span className="ds-row-detail">{formatNumber(row.events)} events{share === null ? "" : ` · ${share}% of value`}</span>
+                          <span className="ds-row-value">{formatNumber(row.total)}</span>
+                          {share === null ? null : <span className="ds-meter" aria-hidden="true"><span style={{ width: `${share}%` }} /></span>}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                  {view.sharesValid ? null : (
+                    <p className="ds-note">Shares are left out: {view.summary.total === 0 ? "the values net to zero" : "some segments sum below zero"}, so a share of the total has no clear meaning.</p>
+                  )}
+                  {view.segments.length > shownSegments ? (
+                    <div className="ds-actions sl-more">
+                      <span className="sl-more-count">Showing {formatNumber(shownSegments)} of {formatNumber(view.segments.length)} segments, largest first.</span>
+                      <button type="button" className="ds-plain" onClick={() => setShownSegments((count) => count + SEGMENT_PAGE)}>
+                        Show {formatNumber(Math.min(SEGMENT_PAGE, view.segments.length - shownSegments))} more
+                      </button>
+                    </div>
+                  ) : null}
+                </>
               )}
             </section>
           </div>

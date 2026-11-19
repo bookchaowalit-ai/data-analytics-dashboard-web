@@ -15,3 +15,8 @@ html, body { margin: 0; background: var(--ds-bg); }
 .sl-empty h2 { margin: 0; font-size: 20px; font-weight: 700; }
 .sl-empty p { max-width: 46ch; margin: 0; color: var(--ds-muted); font-size: 15px; line-height: 1.6; }
 .sl-empty .ds-actions { justify-content: center; margin-top: 8px; }
+.sl-signed { display: grid; gap: 12px; align-content: start; }
+.sl-signed .ds-note { margin: 0; }
+.sl-signed-table { max-height: 420px; overflow: auto; }
+.sl-more { align-items: center; justify-content: space-between; margin-top: 12px; }
+.sl-more-count { color: var(--ds-muted); font-size: 14px; }

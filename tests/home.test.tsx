@@ -118,6 +118,60 @@ describe("Signal Ledger on the Dashboard shell", () => {
   });
 });
 
+describe("review fixes 2026-11-19", () => {
+  const csv = (rows: string[], name = "f.csv") => new File([["timestamp,segment,value", ...rows].join("\n")], name, { type: "text/csv" });
+  const segmentRows = () => [...host.querySelectorAll("section[aria-labelledby='segments-heading'] .ds-row")];
+
+  it("keeps a bucket that sums below zero out of the line chart and lists it as signed values instead", async () => {
+    await upload(csv(["2026-11-19T09:00:00Z,web,5", "2026-11-19T11:00:00Z,web,-20"]));
+    expect($(".ds-chart-panel")).toBeNull();
+    const panel = $(".sl-signed")!;
+    expect(panel.textContent).toContain("below zero");
+    const cells = [...panel.querySelectorAll(".ds-table td")].map((td) => td.textContent);
+    expect(cells).toContain("-20");
+    expect(cells).toContain("5");
+  });
+
+  it("charts the real bucket values, so tiny values keep their order and the peak", async () => {
+    await upload(csv(["2026-11-19T09:00:00Z,web,0.003", "2026-11-19T11:00:00Z,web,0.004"]));
+    const cells = [...host.querySelectorAll(".ds-chart-panel .ds-table td")].map((td) => td.textContent);
+    expect(cells).toContain("0.003");
+    expect(host.querySelector(".ds-chart-panel tr[data-peak] td")?.textContent).toBe("0.004 (peak)");
+  });
+
+  it("renders segments 50 at a time while the stats still count all of them", async () => {
+    await upload(csv(Array.from({ length: 120 }, (_, i) => `2026-11-19T11:00:00Z,s${i},1`)));
+    expect(stats()[2]).toBe("Segments120distinct segment values");
+    expect(segmentRows()).toHaveLength(50);
+    press(button("Show 50 more")!);
+    expect(segmentRows()).toHaveLength(100);
+    press(button("Show 20 more")!);
+    expect(segmentRows()).toHaveLength(120);
+    expect(button("Show 20 more")).toBeUndefined();
+    press(button("7D")!);
+    expect(segmentRows()).toHaveLength(50);
+  });
+
+  it("leaves out shares and bars when a share of the net total has no meaning", async () => {
+    await upload(csv(["2026-11-19T10:00:00Z,in,5", "2026-11-19T10:00:00Z,out,-5"]));
+    expect(segmentRows().map((row) => row.textContent)).toEqual(["in1 events5", "out1 events-5"]);
+    expect(host.querySelector("section[aria-labelledby='segments-heading'] .ds-meter")).toBeNull();
+    expect($("section[aria-labelledby='segments-heading']")?.textContent).toContain("Shares are left out");
+  });
+
+  it("announces each load and clear in a polite status region that stays in the page", async () => {
+    const status = () => $(".sl-source [role='status']");
+    expect(status()?.getAttribute("aria-live")).toBe("polite");
+    expect(status()?.textContent).toBe("");
+    await upload(csv(["2026-11-19T10:00:00Z,web,3", "2026-11-19T11:30:00Z,,2"], "events.csv"));
+    expect(status()?.textContent).toBe("Loaded events.csv: 2 rows read.");
+    press(button("Load sample data")!);
+    expect(status()?.textContent).toBe("Loaded sample data: 400 rows.");
+    press(button("Clear")!);
+    expect(status()?.textContent).toBe("Cleared. No data loaded.");
+  });
+});
+
 describe("layout and metadata", () => {
   it("uses Geist on <html> and the site's own domain", () => {
     expect(renderToString(<RootLayout><p>child</p></RootLayout>)).toContain('<html lang="en" class="font-geist">');
