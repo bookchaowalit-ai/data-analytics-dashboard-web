@@ -9,7 +9,7 @@ Last reviewed: 2026-11-28 · commit `83d05a4`
 ```mermaid
 flowchart TD
   DEV["push or PR to main"] --> CI["CI: ci-node (lint, typecheck, test, build) + security scan"]
-  CI -->|green| DEPLOY["deploy to host [ต้องยืนยัน]"]
+  DEV --> DEPLOY["deploy to host: no workflow in repo deploys, path unknown (Vercel Git or CLI) [ต้องยืนยัน]"]
   VISITOR["visitor"] --> PAGE["/ server page"]
   PAGE --> BOARD["SignalBoard (client component), empty state first"]
   BOARD -->|"attach CSV"| SIZE{"file over 10 MB?"}
